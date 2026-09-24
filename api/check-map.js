@@ -30,32 +30,47 @@ export default async function handler(req, res) {
         .replace(/\s+/g, " ")
         .trim();
 
+    // Find every style definition and its icon image
+    const styleBlocks =
+      kml.match(/<Style\b[\s\S]*?<\/Style>/gi) || [];
+
+    const styles = styleBlocks
+      .map(style => {
+        const id =
+          style.match(/<Style[^>]*id=["']([^"']+)["']/i)?.[1] || "";
+
+        const iconHref =
+          style.match(/<href>([\s\S]*?)<\/href>/i)?.[1] || "";
+
+        return {
+          id,
+          iconHref: decode(iconHref)
+        };
+      })
+      .filter(style => style.id);
+
+    // Find the 2026 folder
     const folders =
       kml.match(/<Folder[\s\S]*?<\/Folder>/gi) || [];
 
-    const folderSummary = [];
-    const allRecords = [];
-
-    folders.forEach((folder, folderIndex) => {
-      const folderNameRaw =
+    const folder2026 = folders.find(folder => {
+      const name =
         folder.match(/<name>([\s\S]*?)<\/name>/i)?.[1] || "";
 
-      const folderName = decode(folderNameRaw);
+      return decode(name) === "2026";
+    });
 
+    const records2026 = [];
+
+    if (folder2026) {
       const placemarks =
-        folder.match(/<Placemark[\s\S]*?<\/Placemark>/gi) || [];
+        folder2026.match(/<Placemark[\s\S]*?<\/Placemark>/gi) || [];
 
-      folderSummary.push({
-        folderNumber: folderIndex + 1,
-        name: folderName,
-        placemarks: placemarks.length
-      });
-
-      placemarks.forEach((placemark, placemarkIndex) => {
-        const nameRaw =
+      placemarks.forEach((placemark, index) => {
+        const name =
           placemark.match(/<name>([\s\S]*?)<\/name>/i)?.[1] || "";
 
-        const descriptionRaw =
+        const description =
           placemark.match(
             /<description>([\s\S]*?)<\/description>/i
           )?.[1] || "";
@@ -72,21 +87,47 @@ export default async function handler(req, res) {
 
         if (!coordinates) return;
 
-        allRecords.push({
-          id: `${folderIndex + 1}-${placemarkIndex + 1}`,
-          layer: folderName,
-          location: decode(nameRaw),
-          description: decode(descriptionRaw),
-          styleUrl: decode(styleUrl),
+        const cleanStyleUrl = decode(styleUrl);
+        const styleId = cleanStyleUrl.replace(/^#/, "");
+
+        const matchingStyle =
+          styles.find(style => style.id === styleId) || null;
+
+        records2026.push({
+          id: index + 1,
+          location: decode(name),
+          description: decode(description),
+          styleUrl: cleanStyleUrl,
+          iconHref: matchingStyle?.iconHref || null,
           latitude: Number(coordinates[2]),
           longitude: Number(coordinates[1])
         });
       });
-    });
+    }
 
-    const records2026 = allRecords.filter(record =>
-      /\b2026\b/i.test(record.layer)
-    );
+    const styleUsage = {};
+
+    records2026.forEach(record => {
+      const key = record.styleUrl || "none";
+
+      if (!styleUsage[key]) {
+        styleUsage[key] = {
+          styleUrl: key,
+          iconHref: record.iconHref,
+          count: 0,
+          examples: []
+        };
+      }
+
+      styleUsage[key].count++;
+
+      if (styleUsage[key].examples.length < 3) {
+        styleUsage[key].examples.push({
+          location: record.location,
+          description: record.description
+        });
+      }
+    });
 
     return res.status(200).json({
       ok: true,
@@ -97,10 +138,9 @@ export default async function handler(req, res) {
         mapId,
         reachable: true
       },
-      foldersFound: folders.length,
-      folderSummary,
-      recordsFound: allRecords.length,
+      stylesFound: styles.length,
       records2026Found: records2026.length,
+      styleUsage2026: Object.values(styleUsage),
       records2026
     });
 
