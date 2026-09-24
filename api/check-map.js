@@ -50,15 +50,67 @@ export default async function handler(req, res) {
 
         if (!coordinates) return null;
 
+        const cleanName = decode(name);
+        const cleanDescription = decode(description);
+
+        const searchable =
+          `${cleanName} ${cleanDescription}`.toLowerCase();
+
+        let type = "record";
+
+        if (
+          searchable.includes("nest") ||
+          searchable.includes("destroyed")
+        ) {
+          type = "nest";
+        } else if (
+          searchable.includes("confirmed sighting") ||
+          searchable.includes("confirmed")
+        ) {
+          type = "confirmed-sighting";
+        } else if (
+          searchable.includes("sighting") ||
+          searchable.includes("sighted") ||
+          searchable.includes("spotted")
+        ) {
+          type = "sighting";
+        }
+
+        const is2026 =
+          /\b2026\b/i.test(cleanDescription) ||
+          /\b2026\b/i.test(cleanName);
+
         return {
           id: index + 1,
-          location: decode(name),
-          description: decode(description),
+          location: cleanName,
+          description: cleanDescription,
           latitude: Number(coordinates[2]),
-          longitude: Number(coordinates[1])
+          longitude: Number(coordinates[1]),
+          type,
+          year: is2026 ? 2026 : null
         };
       })
       .filter(Boolean);
+
+    const records2026 = records.filter(
+      record => record.year === 2026
+    );
+
+    const summary2026 = {
+      total: records2026.length,
+      nests: records2026.filter(
+        record => record.type === "nest"
+      ).length,
+      confirmedSightings: records2026.filter(
+        record => record.type === "confirmed-sighting"
+      ).length,
+      sightings: records2026.filter(
+        record => record.type === "sighting"
+      ).length,
+      other: records2026.filter(
+        record => record.type === "record"
+      ).length
+    };
 
     return res.status(200).json({
       ok: true,
@@ -71,7 +123,8 @@ export default async function handler(req, res) {
       },
       placemarksFound: placemarks.length,
       recordsWithCoordinates: records.length,
-      records: records.slice(0, 20)
+      summary2026,
+      records2026
     });
 
   } catch (error) {
