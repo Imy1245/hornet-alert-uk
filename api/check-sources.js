@@ -21,7 +21,7 @@ export default async function handler(req, res) {
 
     const xml = await response.text();
 
-    const keywords = [
+    const hornetTerms = [
       "yellow-legged hornet",
       "yellow legged hornet",
       "asian hornet",
@@ -40,9 +40,9 @@ export default async function handler(req, res) {
 
     const entries = xml.match(/<entry[\s\S]*?<\/entry>/gi) || [];
 
-    const hornetArticles = entries
+    const articles = entries
       .map(entry => {
-        const title =
+        const titleRaw =
           entry.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "";
 
         const link =
@@ -53,29 +53,83 @@ export default async function handler(req, res) {
           entry.match(/<updated>([\s\S]*?)<\/updated>/i)?.[1] ||
           "";
 
-        const content =
+        const contentRaw =
           entry.match(/<content[^>]*>([\s\S]*?)<\/content>/i)?.[1] ||
           entry.match(/<summary[^>]*>([\s\S]*?)<\/summary>/i)?.[1] ||
           "";
 
-        const cleanTitle = decode(title);
-        const cleanContent = decode(content);
+        const title = decode(titleRaw);
+        const content = decode(contentRaw);
 
-        const searchable =
-          `${cleanTitle} ${cleanContent}`.toLowerCase();
+        const titleLower = title.toLowerCase();
+        const contentLower = content.toLowerCase();
 
-        const matchedKeywords = keywords.filter(keyword =>
-          searchable.includes(keyword)
+        const titleHornetTerms = hornetTerms.filter(term =>
+          titleLower.includes(term)
         );
 
+        const contentHornetTerms = hornetTerms.filter(term =>
+          contentLower.includes(term)
+        );
+
+        if (
+          titleHornetTerms.length === 0 &&
+          contentHornetTerms.length === 0
+        ) {
+          return null;
+        }
+
+        let type = "information";
+        let priority = "low";
+
+        const combined = `${titleLower} ${contentLower}`;
+
+        if (
+          combined.includes("nest found") ||
+          combined.includes("nest located") ||
+          combined.includes("nest destroyed") ||
+          combined.includes("nest removed")
+        ) {
+          type = "nest";
+          priority = "high";
+        } else if (
+          combined.includes("confirmed sighting") ||
+          combined.includes("confirmed sightings") ||
+          combined.includes("confirmed report") ||
+          combined.includes("confirmed presence")
+        ) {
+          type = "confirmed-sighting";
+          priority = "high";
+        } else if (
+          combined.includes("sighting") ||
+          combined.includes("sightings") ||
+          combined.includes("report")
+        ) {
+          type = "sighting-information";
+          priority = "medium";
+        }
+
         return {
-          title: cleanTitle,
+          title,
           published,
           url: link,
-          matchedKeywords
+          type,
+          priority,
+          hornetInTitle: titleHornetTerms.length > 0,
+          matchedKeywords: [
+            ...new Set([
+              ...titleHornetTerms,
+              ...contentHornetTerms
+            ])
+          ]
         };
       })
-      .filter(article => article.matchedKeywords.length > 0);
+      .filter(Boolean)
+      .filter(article => article.hornetInTitle);
+
+    const highPriority = articles.filter(
+      article => article.priority === "high"
+    );
 
     return res.status(200).json({
       ok: true,
@@ -88,8 +142,9 @@ export default async function handler(req, res) {
         reachable: true
       },
       articlesChecked: entries.length,
-      hornetArticlesFound: hornetArticles.length,
-      hornetArticles
+      relevantHornetArticles: articles.length,
+      highPriorityItems: highPriority.length,
+      articles
     });
 
   } catch (error) {
