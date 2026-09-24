@@ -18,9 +18,6 @@ export default async function handler(req, res) {
 
     const kml = await response.text();
 
-    const placemarks =
-      kml.match(/<Placemark[\s\S]*?<\/Placemark>/gi) || [];
-
     const decode = (text = "") =>
       text
         .replace(/<!\[CDATA\[|\]\]>/g, "")
@@ -33,14 +30,39 @@ export default async function handler(req, res) {
         .replace(/\s+/g, " ")
         .trim();
 
-    const records = placemarks
-      .map((placemark, index) => {
-        const name =
+    const folders =
+      kml.match(/<Folder[\s\S]*?<\/Folder>/gi) || [];
+
+    const folderSummary = [];
+    const allRecords = [];
+
+    folders.forEach((folder, folderIndex) => {
+      const folderNameRaw =
+        folder.match(/<name>([\s\S]*?)<\/name>/i)?.[1] || "";
+
+      const folderName = decode(folderNameRaw);
+
+      const placemarks =
+        folder.match(/<Placemark[\s\S]*?<\/Placemark>/gi) || [];
+
+      folderSummary.push({
+        folderNumber: folderIndex + 1,
+        name: folderName,
+        placemarks: placemarks.length
+      });
+
+      placemarks.forEach((placemark, placemarkIndex) => {
+        const nameRaw =
           placemark.match(/<name>([\s\S]*?)<\/name>/i)?.[1] || "";
 
-        const description =
+        const descriptionRaw =
           placemark.match(
             /<description>([\s\S]*?)<\/description>/i
+          )?.[1] || "";
+
+        const styleUrl =
+          placemark.match(
+            /<styleUrl>([\s\S]*?)<\/styleUrl>/i
           )?.[1] || "";
 
         const coordinates =
@@ -48,69 +70,23 @@ export default async function handler(req, res) {
             /<coordinates>\s*([-\d.]+),([-\d.]+)(?:,[-\d.]+)?\s*<\/coordinates>/i
           );
 
-        if (!coordinates) return null;
+        if (!coordinates) return;
 
-        const cleanName = decode(name);
-        const cleanDescription = decode(description);
-
-        const searchable =
-          `${cleanName} ${cleanDescription}`.toLowerCase();
-
-        let type = "record";
-
-        if (
-          searchable.includes("nest") ||
-          searchable.includes("destroyed")
-        ) {
-          type = "nest";
-        } else if (
-          searchable.includes("confirmed sighting") ||
-          searchable.includes("confirmed")
-        ) {
-          type = "confirmed-sighting";
-        } else if (
-          searchable.includes("sighting") ||
-          searchable.includes("sighted") ||
-          searchable.includes("spotted")
-        ) {
-          type = "sighting";
-        }
-
-        const is2026 =
-          /\b2026\b/i.test(cleanDescription) ||
-          /\b2026\b/i.test(cleanName);
-
-        return {
-          id: index + 1,
-          location: cleanName,
-          description: cleanDescription,
+        allRecords.push({
+          id: `${folderIndex + 1}-${placemarkIndex + 1}`,
+          layer: folderName,
+          location: decode(nameRaw),
+          description: decode(descriptionRaw),
+          styleUrl: decode(styleUrl),
           latitude: Number(coordinates[2]),
-          longitude: Number(coordinates[1]),
-          type,
-          year: is2026 ? 2026 : null
-        };
-      })
-      .filter(Boolean);
+          longitude: Number(coordinates[1])
+        });
+      });
+    });
 
-    const records2026 = records.filter(
-      record => record.year === 2026
+    const records2026 = allRecords.filter(record =>
+      /\b2026\b/i.test(record.layer)
     );
-
-    const summary2026 = {
-      total: records2026.length,
-      nests: records2026.filter(
-        record => record.type === "nest"
-      ).length,
-      confirmedSightings: records2026.filter(
-        record => record.type === "confirmed-sighting"
-      ).length,
-      sightings: records2026.filter(
-        record => record.type === "sighting"
-      ).length,
-      other: records2026.filter(
-        record => record.type === "record"
-      ).length
-    };
 
     return res.status(200).json({
       ok: true,
@@ -121,9 +97,10 @@ export default async function handler(req, res) {
         mapId,
         reachable: true
       },
-      placemarksFound: placemarks.length,
-      recordsWithCoordinates: records.length,
-      summary2026,
+      foldersFound: folders.length,
+      folderSummary,
+      recordsFound: allRecords.length,
+      records2026Found: records2026.length,
       records2026
     });
 
