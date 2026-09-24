@@ -30,26 +30,6 @@ export default async function handler(req, res) {
         .replace(/\s+/g, " ")
         .trim();
 
-    // Find every style definition and its icon image
-    const styleBlocks =
-      kml.match(/<Style\b[\s\S]*?<\/Style>/gi) || [];
-
-    const styles = styleBlocks
-      .map(style => {
-        const id =
-          style.match(/<Style[^>]*id=["']([^"']+)["']/i)?.[1] || "";
-
-        const iconHref =
-          style.match(/<href>([\s\S]*?)<\/href>/i)?.[1] || "";
-
-        return {
-          id,
-          iconHref: decode(iconHref)
-        };
-      })
-      .filter(style => style.id);
-
-    // Find the 2026 folder
     const folders =
       kml.match(/<Folder[\s\S]*?<\/Folder>/gi) || [];
 
@@ -60,13 +40,75 @@ export default async function handler(req, res) {
       return decode(name) === "2026";
     });
 
-    const records2026 = [];
+    if (!folder2026) {
+      throw new Error("2026 map layer not found");
+    }
 
-    if (folder2026) {
-      const placemarks =
-        folder2026.match(/<Placemark[\s\S]*?<\/Placemark>/gi) || [];
+    const placemarks =
+      folder2026.match(/<Placemark[\s\S]*?<\/Placemark>/gi) || [];
 
-      placemarks.forEach((placemark, index) => {
+    const classifyRecord = description => {
+      const text = description.toLowerCase();
+
+      if (
+        text.includes("confirmed primary nest") ||
+        text.includes("confirmed secondary nest")
+      ) {
+        return {
+          type: "nest",
+          status: "confirmed"
+        };
+      }
+
+      if (
+        text.includes("primary nest") ||
+        text.includes("secondary nest") ||
+        /^nest\b/i.test(description.trim())
+      ) {
+        return {
+          type: "nest",
+          status: "reported"
+        };
+      }
+
+      if (
+        text.includes("confirmed sighting") ||
+        text.includes("credible sighting")
+      ) {
+        return {
+          type: "sighting",
+          status: "confirmed-or-credible"
+        };
+      }
+
+      if (
+        text.includes("sighting") ||
+        text.includes("sightings")
+      ) {
+        return {
+          type: "sighting",
+          status: "reported"
+        };
+      }
+
+      if (
+        text.includes("hornet") ||
+        text.includes("hornets")
+      ) {
+        return {
+          type: "hornet-record",
+          status: "unclassified"
+        };
+      }
+
+      return {
+        type: "other",
+        status: "unclassified"
+      };
+    };
+
+    const records2026 = placemarks
+      .map((placemark, index) => {
         const name =
           placemark.match(/<name>([\s\S]*?)<\/name>/i)?.[1] || "";
 
@@ -75,72 +117,64 @@ export default async function handler(req, res) {
             /<description>([\s\S]*?)<\/description>/i
           )?.[1] || "";
 
-        const styleUrl =
-          placemark.match(
-            /<styleUrl>([\s\S]*?)<\/styleUrl>/i
-          )?.[1] || "";
-
         const coordinates =
           placemark.match(
             /<coordinates>\s*([-\d.]+),([-\d.]+)(?:,[-\d.]+)?\s*<\/coordinates>/i
           );
 
-        if (!coordinates) return;
+        if (!coordinates) return null;
 
-        const cleanStyleUrl = decode(styleUrl);
-        const styleId = cleanStyleUrl.replace(/^#/, "");
+        const cleanDescription = decode(description);
+        const classification = classifyRecord(cleanDescription);
 
-        const matchingStyle =
-          styles.find(style => style.id === styleId) || null;
-
-        records2026.push({
-          id: index + 1,
+        return {
+          id: `2026-${index + 1}`,
+          year: 2026,
           location: decode(name),
-          description: decode(description),
-          styleUrl: cleanStyleUrl,
-          iconHref: matchingStyle?.iconHref || null,
+          description: cleanDescription,
+          type: classification.type,
+          status: classification.status,
           latitude: Number(coordinates[2]),
           longitude: Number(coordinates[1])
-        });
-      });
-    }
-
-    const styleUsage = {};
-
-    records2026.forEach(record => {
-      const key = record.styleUrl || "none";
-
-      if (!styleUsage[key]) {
-        styleUsage[key] = {
-          styleUrl: key,
-          iconHref: record.iconHref,
-          count: 0,
-          examples: []
         };
-      }
+      })
+      .filter(Boolean);
 
-      styleUsage[key].count++;
+    const summary = {
+      total: records2026.length,
 
-      if (styleUsage[key].examples.length < 3) {
-        styleUsage[key].examples.push({
-          location: record.location,
-          description: record.description
-        });
-      }
-    });
+      sightings: records2026.filter(
+        record => record.type === "sighting"
+      ).length,
+
+      nests: records2026.filter(
+        record => record.type === "nest"
+      ).length,
+
+      hornetRecords: records2026.filter(
+        record => record.type === "hornet-record"
+      ).length,
+
+      unclassified: records2026.filter(
+        record => record.status === "unclassified"
+      ).length
+    };
 
     return res.status(200).json({
       ok: true,
       service: "Hornet Alert UK",
       checkedAt,
+
       source: {
         name: "Asian Hornet Map UK",
         mapId,
         reachable: true
       },
-      stylesFound: styles.length,
-      records2026Found: records2026.length,
-      styleUsage2026: Object.values(styleUsage),
+
+      notice:
+        "Classification is derived from the map description. Original wording is preserved.",
+
+      summary,
       records2026
     });
 
