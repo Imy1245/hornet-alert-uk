@@ -112,7 +112,6 @@ export default async function handler(req, res) {
         december: 12
       };
 
-      // Formats such as 26.2.26, 29.5.26 or 13.6.26
       const numeric =
         description.match(
           /\b(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})\b/
@@ -135,7 +134,6 @@ export default async function handler(req, res) {
         }
       }
 
-      // Formats such as 10th May, 30 April or 8 June
       const written =
         description.match(
           /\b(\d{1,2})(?:st|nd|rd|th)?\s+(January|February|March|April|May|June|July|August|September|October|November|December)\b/i
@@ -171,7 +169,7 @@ export default async function handler(req, res) {
       folder2026.match(/<Placemark[\s\S]*?<\/Placemark>/gi) || [];
 
     const records2026 = placemarks
-      .map((placemark, index) => {
+      .map(placemark => {
         const name =
           placemark.match(/<name>([\s\S]*?)<\/name>/i)?.[1] || "";
 
@@ -187,20 +185,46 @@ export default async function handler(req, res) {
 
         if (!coordinates) return null;
 
+        const cleanLocation = decode(name);
         const cleanDescription = decode(description);
+
         const classification =
           classifyRecord(cleanDescription);
 
+        const eventDate =
+          extractDate(cleanDescription);
+
+        const latitude =
+          Number(coordinates[2]);
+
+        const longitude =
+          Number(coordinates[1]);
+
+        /*
+         * Stable fingerprint
+         *
+         * This does NOT depend on the marker's position
+         * in the Google map. If markers are reordered,
+         * the same record should keep the same ID.
+         */
+        const fingerprint = [
+          "2026",
+          cleanLocation.toLowerCase(),
+          cleanDescription.toLowerCase(),
+          latitude.toFixed(5),
+          longitude.toFixed(5)
+        ].join("|");
+
         return {
-          id: `2026-${index + 1}`,
+          id: fingerprint,
           year: 2026,
-          eventDate: extractDate(cleanDescription),
-          location: decode(name),
+          eventDate,
+          location: cleanLocation,
           description: cleanDescription,
           type: classification.type,
           status: classification.status,
-          latitude: Number(coordinates[2]),
-          longitude: Number(coordinates[1])
+          latitude,
+          longitude
         };
       })
       .filter(Boolean);
