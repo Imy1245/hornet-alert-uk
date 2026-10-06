@@ -1,0 +1,19 @@
+name: Hornet Alert UK Monitor
+
+on:
+  schedule:
+    - cron: '3,13,23,33,43,53 * * * *'
+  workflow_dispatch:
+
+jobs:
+  check-hornet-map:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check for new hornet map records
+        run: |
+          curl --fail --silent --show-error \
+            --retry 2 \
+            --retry-delay 10 \
+            --max-time 60 \
+            "https://hornet-alert-uk.vercel.app/api/check-new-records"
